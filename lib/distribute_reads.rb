@@ -65,10 +65,8 @@ module DistributeReads
           end
         end
       end
-      Rails.logger.debug 'Distributing reads!'
-      Rails.logger.debug '*'*80
+
       value = yield
-      Rails.logger.debug '*'*80
       warn "[distribute_reads] Call `to_a` inside block to execute query on replica" if value.is_a?(ActiveRecord::Relation) && !previous_value
       value
     ensure
