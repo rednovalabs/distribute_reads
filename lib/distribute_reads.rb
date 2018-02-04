@@ -21,21 +21,33 @@ module DistributeReads
   def self.lag(connection: nil)
     raise DistributeReads::Error, "Don't use outside distribute_reads" unless Thread.current[:distribute_reads]
 
-    connection ||= ActiveRecord::Base.connection
-    if %w(PostgreSQL PostGIS).include?(connection.adapter_name)
-      replica_pool = connection.instance_variable_get(:@slave_pool)
-      if replica_pool && replica_pool.connections.size > 1
-        warn "[distribute_reads] Multiple replicas available, lag only reported for one"
-      end
+    begin
+      connection ||= ActiveRecord::Base.connection
+      if %w(PostgreSQL PostGIS).include?(connection.adapter_name)
+        replica_pool = connection.instance_variable_get(:@slave_pool)
+        if replica_pool && replica_pool.connections.size > 1
+          warn "[distribute_reads] Multiple replicas available, lag only reported for one"
+        end
 
-      connection.execute(
+        connection.execute(
         "SELECT CASE
-          WHEN NOT pg_is_in_recovery() OR pg_last_xlog_receive_location() = pg_last_xlog_replay_location() THEN 0
-          ELSE EXTRACT (EPOCH FROM NOW() - pg_last_xact_replay_timestamp())
+        WHEN NOT pg_is_in_recovery() OR pg_last_xlog_receive_location() = pg_last_xlog_replay_location() THEN 0
+        ELSE EXTRACT (EPOCH FROM NOW() - pg_last_xact_replay_timestamp())
         END AS lag"
-      ).first["lag"].to_f
-    else
-      raise DistributeReads::Error, "Option not supported with this adapter"
+        ).first["lag"].to_f
+      else
+        raise DistributeReads::Error, "Option not supported with this adapter"
+      end
+    rescue ActiveRecord::StatementInvalid => e
+      if e.original_exception.is_a?(PG::FeatureNotSupported)
+        # AWS Aurora raises the following error when checking the replication lag:
+        # Function pg_last_xlog_receive_location() is currently not supported for Aurora
+        # This makes sense given the way replication is handled in Aurora.
+        # For now the solution is to return 0 lag.
+        return 0.5
+      else
+        raise e
+      end
     end
   end
 
