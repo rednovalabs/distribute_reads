@@ -1,4 +1,5 @@
 require "makara"
+require "concurrent"
 require "distribute_reads/appropriate_pool"
 require "distribute_reads/cache_store"
 require "distribute_reads/version"
@@ -12,6 +13,7 @@ module DistributeReads
     attr_accessor :by_default
     attr_accessor :default_options
   end
+  @@aurora = Concurrent::AtomicFixnum.new(0)
   self.by_default = false
   self.default_options = {
     failover: true,
@@ -27,33 +29,52 @@ module DistributeReads
   def self.lag(connection: nil)
     raise DistributeReads::Error, "Don't use outside distribute_reads" unless Thread.current[:distribute_reads]
 
-    begin
     connection ||= ActiveRecord::Base.connection
-
     replica_pool = connection.instance_variable_get(:@slave_pool)
     if replica_pool && replica_pool.connections.size > 1
       warn "[distribute_reads] Multiple replicas available, lag only reported for one"
     end
 
     if %w(PostgreSQL PostGIS).include?(connection.adapter_name)
-      # cache the version number
-      @server_version_num ||= {}
-      cache_key = connection.pool.object_id
-      @server_version_num[cache_key] ||= connection.execute("SHOW server_version_num").first["server_version_num"].to_i
+      if @@aurora.value == 0
+        # test for aurora
+        begin
+          connection.execute("SELECT AURORA_VERSION();")
+          @@aurora.compare_and_set(0, 1)
+        rescue ActiveRecord::StatementInvalid
+          @@aurora.compare_and_set(0, -1)
+        end
+      end
 
-      lag_condition =
-        if @server_version_num[cache_key] >= 100000
+      case @@aurora.value
+      when -1
+        # not on aurora
+        # cache the version number
+        @server_version_num ||= {}
+        cache_key = connection.pool.object_id
+        @server_version_num[cache_key] ||= connection.execute("SHOW server_version_num").first["server_version_num"].to_i
+
+        lag_condition = if @server_version_num[cache_key] >= 100000
           "pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn()"
         else
           "pg_last_xlog_receive_location() = pg_last_xlog_replay_location()"
         end
 
-      connection.execute(
-        "SELECT CASE
-          WHEN NOT pg_is_in_recovery() OR #{lag_condition} THEN 0
-          ELSE EXTRACT (EPOCH FROM NOW() - pg_last_xact_replay_timestamp())
-        END AS lag".squish
-      ).first["lag"].to_f
+        lag_query = <<-SQL
+SELECT CASE
+WHEN NOT pg_is_in_recovery() OR #{lag_condition} THEN 0
+ELSE EXTRACT (EPOCH FROM NOW() - pg_last_xact_replay_timestamp())
+END AS lag
+SQL
+
+        connection.execute(lag_query.squish).first["lag"].to_f
+      when 1
+        # yes on aurora
+        # AWS Aurora does not use traditional PG replication.
+        # See https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/AuroraPostgreSQL.Replication.html
+        # We could query the API every so often, but in practice the lag is so low it would be a terrible overhead to check it. Give a reasonable approximation of the replica lag
+        return 0.5
+      end
     elsif %w(MySQL Mysql2 Mysql2Spatial Mysql2Rgeo).include?(connection.adapter_name)
       replica_value = Thread.current[:distribute_reads][:replica]
       begin
@@ -66,17 +87,6 @@ module DistributeReads
       end
     else
       raise DistributeReads::Error, "Option not supported with this adapter"
-    end
-    rescue ActiveRecord::StatementInvalid => e
-      if e.original_exception.is_a?(PG::FeatureNotSupported)
-        # AWS Aurora raises the following error when checking the replication lag:
-        # Function pg_last_xlog_receive_location() is currently not supported for Aurora
-        # This makes sense given the way replication is handled in Aurora.
-        # For now the solution is to return 0 lag.
-        return 0.5
-      else
-        raise e
-  end
     end
   end
 
@@ -102,7 +112,7 @@ module DistributeReads
               Thread.current[:distribute_reads][:primary] = true
             else
               raise DistributeReads::TooMuchLag, "Replica lag over #{max_lag} seconds#{options[:lag_on] ? " on #{base_model.name} connection" : ""}"
-  end
+            end
           end
         end
       end
@@ -112,8 +122,8 @@ module DistributeReads
       value
     ensure
       Thread.current[:distribute_reads] = previous_value
+    end
   end
-end
 end
 
 Makara::Proxy.send :prepend, DistributeReads::AppropriatePool
