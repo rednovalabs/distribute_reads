@@ -11,6 +11,7 @@ Gem::Specification.new do |spec|
 
   spec.summary       = "Scale database reads with replicas in Rails"
   spec.homepage      = "https://github.com/ankane/distribute_reads"
+  spec.license       = "MIT"
 
   spec.files = `git ls-files -z`.split("\x0").reject do |f|
     f.match(%r{^(test|spec|features)/})
@@ -24,6 +25,7 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency "bundler"
   spec.add_development_dependency "rake"
   spec.add_development_dependency "minitest"
-  spec.add_development_dependency "pg"
+  spec.add_development_dependency "pg", "< 1"
+  spec.add_development_dependency "mysql2"
   spec.add_development_dependency "activejob"
 end

@@ -1,3 +1,13 @@
+## 0.2.2 [unreleased]
+
+- Added support for MySQL replication lag
+- Added `replica` option
+
+## 0.2.1
+
+- Fixed lag check for Postgres 10
+- Added `replication_lag` method
+
 ## 0.2.0
 
 Breaking

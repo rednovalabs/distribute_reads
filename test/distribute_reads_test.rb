@@ -65,6 +65,14 @@ class DistributeReadsTest < Minitest::Test
   end
 
   def test_max_lag_under
+    with_lag(0) do
+      distribute_reads(max_lag: 1) do
+        assert_replica
+      end
+    end
+  end
+
+  def test_max_lag_under_not_stubbed
     distribute_reads(max_lag: 1) do
       assert_replica
     end
@@ -165,8 +173,8 @@ class DistributeReadsTest < Minitest::Test
 
   def test_default_options_max_lag
     with_default_options(max_lag: 1) do
-      with_lag(2) do
-        assert_raises DistributeReads::TooMuchLag do
+      assert_raises DistributeReads::TooMuchLag do
+        with_lag(2) do
           distribute_reads do
             assert_replica
           end
@@ -193,6 +201,37 @@ class DistributeReadsTest < Minitest::Test
     assert_equal "Unknown keywords: hi, bye", error.message
   end
 
+  def test_replication_lag
+    with_lag(2) do
+      assert_equal 2, DistributeReads.replication_lag
+    end
+  end
+
+  def test_replica
+    assert_primary prefix: "/*hi*/"
+    distribute_reads(replica: true) do
+      assert_replica prefix: "/*hi*/"
+    end
+  end
+
+  def test_replica_failover_true
+    with_replicas_blacklisted do
+      distribute_reads(replica: true) do
+        assert_primary
+      end
+    end
+  end
+
+  def test_replica_failover_false
+    with_replicas_blacklisted do
+      assert_raises DistributeReads::NoReplicasAvailable do
+        distribute_reads(replica: true, failover: false) do
+          assert_replica
+        end
+      end
+    end
+  end
+
   private
 
   def by_default
@@ -217,17 +256,17 @@ class DistributeReadsTest < Minitest::Test
   end
 
   def with_lag(lag)
-    ActiveRecord::Base.connection.instance_variable_get(:@slave_pool).connections.first.stub(:execute, [{"lag" => lag}]) do
+    DistributeReads.stub(:lag, lag) do
       yield
     end
   end
 
-  def assert_primary
-    assert_equal "primary", current_database
+  def assert_primary(prefix: nil)
+    assert_equal "primary", current_database(prefix: prefix)
   end
 
-  def assert_replica
-    assert_equal "replica", current_database
+  def assert_replica(prefix: nil)
+    assert_equal "replica", current_database(prefix: prefix)
   end
 
   def assert_cache_size(value)

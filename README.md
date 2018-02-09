@@ -76,7 +76,7 @@ You can pass any options as well.
 
 ### Replica Lag
 
-Raise an error when replica lag is too high - *PostgreSQL only*
+Raise an error when replica lag is too high
 
 ```ruby
 distribute_reads(max_lag: 3) do
@@ -145,6 +145,14 @@ distribute_reads(primary: true) do
 end
 ```
 
+## Reference
+
+Get replication lag
+
+```ruby
+DistributeReads.replication_lag
+```
+
 ## Thanks
 
 Thanks to [TaskRabbit](https://github.com/taskrabbit) for Makara, [Sherin Kurian](https://github.com/sherinkurian) for the max lag option, and [Nick Elser](https://github.com/nickelser) for the write-through cache.
@@ -161,3 +169,14 @@ Everyone is encouraged to help improve this project. Here are a few ways you can
 - Fix bugs and [submit pull requests](https://github.com/ankane/distribute_reads/pulls)
 - Write, clarify, or fix documentation
 - Suggest or add new features
+
+To test, run:
+
+```sh
+git clone https://github.com/ankane/distribute_reads.git
+cd distribute_reads
+createdb distribute_reads_test_primary
+createdb distribute_reads_test_replica
+bundle
+bundle exec rake
+```

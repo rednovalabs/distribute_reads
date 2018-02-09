@@ -7,8 +7,17 @@ require "active_job"
 
 ActiveJob::Base.logger.level = :warn
 
+# to debug
+if ENV["VERBOSE"]
+  ActiveRecord::Base.logger = ActiveSupport::Logger.new(STDOUT)
+end
+
+def adapter
+  ENV["ADAPTER"] || "postgresql"
+end
+
 ActiveRecord::Base.establish_connection(
-  adapter: "postgresql_makara",
+  adapter: "#{adapter}_makara",
   makara: {
     sticky: true,
     connections: [
@@ -51,6 +60,7 @@ def insert_value
   User.create!(name: "Boom")
 end
 
-def current_database
-  ActiveRecord::Base.connection.execute("SELECT current_database()").first["current_database"].split("_").last
+def current_database(prefix: nil)
+  func = adapter == "mysql2" ? "database" : "current_database"
+  ActiveRecord::Base.connection.exec_query("#{prefix}SELECT #{func}()").rows.first.first.split("_").last
 end
