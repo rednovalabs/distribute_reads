@@ -39,7 +39,10 @@ module DistributeReads
       if @@aurora.value == 0
         # test for aurora
         begin
-          connection.execute("SELECT AURORA_VERSION();")
+          # must do this in its own txn otherwise if we aren't on Aurora, it wrecks the current transaction
+          connection.transaction(requires_new: true) do
+            connection.execute("SELECT AURORA_VERSION();")
+          end
           @@aurora.compare_and_set(0, 1)
         rescue ActiveRecord::StatementInvalid
           @@aurora.compare_and_set(0, -1)
